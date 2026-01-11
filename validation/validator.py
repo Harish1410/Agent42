@@ -6,32 +6,38 @@ class NumericValidator:
     
     @staticmethod
     def validate(series: pd.Series):
-        
-        series = series.astype(object)
-        valid, invalid = [], []
+        clean_series = series.astype(str).str.strip()
 
-        for val in series:
-            clean = str(val).strip()
+        def get_invalid_reason(val: str) -> str:
+            if not val:
+                return "Empty string"
             
-            if not clean: 
-                invalid.append((val, "Empty string"))
-                continue
+            words = val.lower().split()
+            if all(word in NUMBER_WORDS for word in words):
+                return "Number written in words"
             
-            try:
-                valid.append(int(clean))
-            except (ValueError, TypeError):
-                words = clean.lower().split()
-                
-                if all(word in NUMBER_WORDS for word in words):
-                    reason = "Number written in words"
-                elif any(char.isdigit() for char in clean) and not clean.isdigit():
-                    reason = "Contains digits mixed with invalid characters"
-                else:
-                    reason = "Not a valid number"
-                
-                invalid.append((val, reason))
+            if any(char.isdigit() for char in val):
+                return "Contains digits mixed with invalid characters"
+            
+            return "Not a valid number"
 
-        del series
+        # 1. Identify which are actually valid integers
+        # errors='coerce' turns invalid ones into NaN
+        numeric_conversion = pd.to_numeric(clean_series, errors='coerce')
+        is_valid = numeric_conversion.notnull()
+
+        # 2. Extract valid data (cast to object for large int support)
+        valid_data = numeric_conversion[is_valid].astype(object)
+
+        # 3. Extract invalid data and map the reason without an explicit for loop
+        # We pair the original value with the reason string
+        invalid_entries = [
+            (orig, get_invalid_reason(clean))
+            for orig, clean in zip(series[~is_valid], clean_series[~is_valid])
+        ]
+
+        # Explicit cleanup
+        del clean_series, numeric_conversion
         gc.collect()
 
-        return pd.Series(valid, dtype=object), invalid
+        return valid_data, invalid_entries
