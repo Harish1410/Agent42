@@ -16,6 +16,16 @@ def _big_int():
     sign = random.choice(["", "-", "+"])
     return sign + "".join(random.choices(string.digits, k=digits))
 
+def _scientific():
+    """Generate scientific notation numbers."""
+    base = random.uniform(-1000, 1000)
+    exp = random.randint(-10, 10)
+    return f"{base}e{exp}"
+
+def _infinity():
+    """Generate infinity representations."""
+    return random.choice(["inf", "-inf", "Infinity", "-Infinity", "+inf"])
+
 def _mixed_numeric():
     return f"{random.randint(1,999)}{random.choice(SYMBOLS)}{random.randint(1,999)}"
 
@@ -30,15 +40,23 @@ def _empty():
     return " " * random.randint(0, 5)
 
 def generate(path: str, count: int) -> None:
-    """Generate a file with mixed numeric and invalid data."""
+    """
+    Generate a file with mixed numeric and invalid data.
+    
+    Enhanced with edge cases:
+    - Scientific notation
+    - Infinity representations
+    """
     
     generators = [
-        (_normal_int, 45),
-        (_big_int, 20),
+        (_normal_int, 40),
+        (_big_int, 18),
+        (_scientific, 7),   
+        (_infinity, 3),    
         (_mixed_numeric, 10),
         (_garbage, 10),
         (_spelled, 10),
-        (_empty, 5),
+        (_empty, 2),
     ]
     weighted = [g for g, w in generators for _ in range(w)]
 

@@ -1,43 +1,56 @@
 import pandas as pd
-import gc
+import numpy as np
 from core.config import NUMBER_WORDS
 
 class NumericValidator:
+    """
+    Engineered validator using vectorized decision matrices for classification.
+    Optimized for high-throughput data streams and arbitrary-precision math.
+    """
+    
+    # Precompile word set for O(1) lookup performance
+    _WORD_SET = frozenset(NUMBER_WORDS)
     
     @staticmethod
     def validate(series: pd.Series):
-        clean_series = series.astype(str).str.strip()
+        """
+        Validate numeric data using vectorized operations.
+        Returns (valid_data, invalid_generator).
+        """
+        # Vectorized cleanup
+        clean_s = series.astype(str).str.strip()
+        
+        # Fast-path: Convert to numeric using C-engine
+        # Coerce handles scientific notation (1e10) and identifies garbage as NaN
+        numeric_map = pd.to_numeric(clean_s, errors='coerce')
+        is_valid = numeric_map.notna() & np.isfinite(numeric_map)
+        
+        # Extract Valid Data: Convert to object to support Python's arbitrary-precision ints
+        valid_data = numeric_map[is_valid].apply(int).astype(object)
+        
+        # Prepare slices for the Invalid Decision Matrix
+        inv_orig = series[~is_valid]
+        inv_cln = clean_s[~is_valid]
 
-        def get_invalid_reason(val: str) -> str:
-            if not val:
-                return "Empty string"
-            
-            words = val.lower().split()
-            if all(word in NUMBER_WORDS for word in words):
-                return "Number written in words"
-            
-            if any(char.isdigit() for char in val):
-                return "Contains digits mixed with invalid characters"
-            
-            return "Not a valid number"
+        def invalid_generator():
+            """Lazy generator that classifies invalid data using vector mapping."""
+            if inv_cln.empty:
+                return
 
-        # 1. Identify which are actually valid integers
-        # errors='coerce' turns invalid ones into NaN
-        numeric_conversion = pd.to_numeric(clean_series, errors='coerce')
-        is_valid = numeric_conversion.notnull()
+            # Decision Matrix: Priority is determined by column order (left to right)
+            matrix = pd.DataFrame({
+                "Empty string": inv_cln == '',
+                "Infinity representation": inv_cln.str.lower().isin(['inf', '-inf', 'infinity', '+inf']),
+                "Number written in words": inv_cln.apply(
+                    lambda v: bool(v) and all(w in NumericValidator._WORD_SET for w in v.lower().split())
+                ),
+                "Contains digits mixed with invalid characters": inv_cln.str.contains(r'\d', na=False)
+            }, index=inv_cln.index)
 
-        # 2. Extract valid data (cast to object for large int support)
-        valid_data = numeric_conversion[is_valid].astype(object)
+            # Vectorized Dispatching: Find the first True column name for every row
+            reasons = matrix.idxmax(axis=1).where(matrix.any(axis=1), "Not a valid number")
 
-        # 3. Extract invalid data and map the reason without an explicit for loop
-        # We pair the original value with the reason string
-        invalid_entries = [
-            (orig, get_invalid_reason(clean))
-            for orig, clean in zip(series[~is_valid], clean_series[~is_valid])
-        ]
+            # Yield from a zip-stream to minimize memory overhead
+            yield from zip(inv_orig, reasons)
 
-        # Explicit cleanup
-        del clean_series, numeric_conversion
-        gc.collect()
-
-        return valid_data, invalid_entries
+        return valid_data, invalid_generator()
